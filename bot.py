@@ -220,6 +220,8 @@ async def giveaway_announce(
     }
     embed_color = color_map.get(color.lower(), discord.Color.green())
 
+    description = description.replace("\\n", "\n")
+
     embed = discord.Embed(title=f"🎉 {title}", description=description, color=embed_color)
     embed.add_field(name="📬 Submissions", value=entry_channel.mention, inline=True)
     embed.add_field(name="⏰ Deadline", value=fmt_dt(end_dt.isoformat()), inline=True)
