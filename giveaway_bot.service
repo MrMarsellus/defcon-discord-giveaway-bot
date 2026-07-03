@@ -11,8 +11,6 @@ Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-
-# Sicherheit
 NoNewPrivileges=true
 PrivateTmp=true
 
