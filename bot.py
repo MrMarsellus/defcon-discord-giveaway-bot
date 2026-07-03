@@ -1,9 +1,9 @@
 """
 Boticana / DeFCoN Discord Giveaway Bot
 =======================================
-Überwacht einen Channel, speichert Posts in SQLite und zieht zufällig Gewinner.
+Monitors a channel, stores posts in SQLite, and randomly draws winners.
 
-Benötigt: discord.py >= 2.3  |  Python >= 3.10
+Required: discord.py >= 2.3  |  Python >= 3.10
 Installation: pip install "discord.py>=2.3" python-dotenv
 """
 
@@ -21,13 +21,13 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
-# ── Konfiguration ──────────────────────────────────────────────────────────────
+# ── Configuration ──────────────────────────────────────────────────────────────
 load_dotenv()
 
 BOT_TOKEN       = os.getenv("DISCORD_TOKEN", "")
-ENTRY_CHANNEL   = int(os.getenv("ENTRY_CHANNEL_ID", "0"))   # Channel für Teilnahme-Posts
-WINNER_CHANNEL  = int(os.getenv("WINNER_CHANNEL_ID", "0"))  # Channel für Gewinner-Ankündigung
-ADMIN_CHANNEL   = int(os.getenv("ADMIN_CHANNEL_ID", "0"))   # Channel für Admin-Review
+ENTRY_CHANNEL   = int(os.getenv("ENTRY_CHANNEL_ID", "0"))   # Channel for entry posts
+WINNER_CHANNEL  = int(os.getenv("WINNER_CHANNEL_ID", "0"))  # Channel for winner announcement
+ADMIN_CHANNEL   = int(os.getenv("ADMIN_CHANNEL_ID", "0"))   # Channel for admin review
 GUILD_ID        = int(os.getenv("GUILD_ID", "0"))
 DB_PATH         = os.getenv("DB_PATH", "giveaway.db")
 LOG_LEVEL       = os.getenv("LOG_LEVEL", "INFO")
@@ -43,7 +43,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("giveaway_bot")
 
-# ── Datenbank ──────────────────────────────────────────────────────────────────
+# ── Database ───────────────────────────────────────────────────────────────────
 @contextmanager
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -70,7 +70,7 @@ def init_db():
                 end_date    TEXT NOT NULL,   -- ISO-8601 UTC
                 total_winners INTEGER NOT NULL DEFAULT 1,
                 winners_drawn INTEGER NOT NULL DEFAULT 0,
-                active      INTEGER NOT NULL DEFAULT 1,  -- 1 = läuft, 0 = beendet
+                active      INTEGER NOT NULL DEFAULT 1,  -- 1 = running, 0 = ended
                 created_at  TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -98,16 +98,16 @@ def init_db():
                 draw_round      INTEGER NOT NULL DEFAULT 1,
                 status          TEXT NOT NULL DEFAULT 'pending',
                 -- pending | approved | rejected
-                review_msg_id   INTEGER,   -- Admin-Review-Message
-                announce_msg_id INTEGER,   -- Ankündigung im Winner-Channel
+                review_msg_id   INTEGER,   -- Admin review message
+                announce_msg_id INTEGER,   -- Announcement in the winner channel
                 drawn_at        TEXT NOT NULL DEFAULT (datetime('now')),
                 decided_at      TEXT
             );
         """)
-    log.info("Datenbank initialisiert: %s", DB_PATH)
+    log.info("Database initialized: %s", DB_PATH)
 
 
-# ── Hilfsfunktionen ────────────────────────────────────────────────────────────
+# ── Helper functions ───────────────────────────────────────────────────────────
 def get_active_giveaway(channel_id: int) -> Optional[sqlite3.Row]:
     with get_db() as conn:
         return conn.execute(
@@ -117,7 +117,7 @@ def get_active_giveaway(channel_id: int) -> Optional[sqlite3.Row]:
 
 
 def parse_dt(dt_str: str) -> datetime:
-    """Erwartet 'DD.MM.YYYY HH:MM' (lokale Eingabe) → UTC datetime."""
+    """Expects 'DD.MM.YYYY HH:MM' (local input) → UTC datetime."""
     return datetime.strptime(dt_str, "%d.%m.%Y %H:%M").replace(tzinfo=timezone.utc)
 
 
@@ -127,8 +127,8 @@ def fmt_dt(dt: datetime) -> str:
 
 def draw_winner(giveaway_id: int, already_won_users: list[int]) -> Optional[sqlite3.Row]:
     """
-    Zieht einen Gewinner gewichtet nach Anzahl Einträge.
-    Ausgeschlossen: bereits gewonnene User + disqualifizierte Einträge.
+    Draws a winner weighted by number of entries.
+    Excluded: users who already won + disqualified entries.
     """
     with get_db() as conn:
         rows = conn.execute("""
@@ -138,7 +138,7 @@ def draw_winner(giveaway_id: int, already_won_users: list[int]) -> Optional[sqli
               AND status='pending'
         """, (giveaway_id,)).fetchall()
 
-    # Alle pending-Einträge → Pool (ein Eintrag = ein Los)
+    # All pending entries → pool (one entry = one ticket)
     pool = [r for r in rows if r["user_id"] not in already_won_users]
     if not pool:
         return None
@@ -146,7 +146,7 @@ def draw_winner(giveaway_id: int, already_won_users: list[int]) -> Optional[sqli
     return chosen_entry
 
 
-# ── Bot-Setup ──────────────────────────────────────────────────────────────────
+# ── Bot setup ──────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
 intents.messages         = True
 intents.message_content  = True
@@ -160,16 +160,16 @@ tree = bot.tree
 # ── Events ─────────────────────────────────────────────────────────────────────
 @bot.event
 async def on_ready():
-    log.info("Bot online als %s (ID %s)", bot.user, bot.user.id)
+    log.info("Bot online as %s (ID %s)", bot.user, bot.user.id)
     guild = discord.Object(id=GUILD_ID)
     await tree.sync(guild=guild)
-    log.info("Slash-Commands synchronisiert für Guild %s", GUILD_ID)
+    log.info("Slash commands synchronized for Guild %s", GUILD_ID)
     check_giveaway_end.start()
 
 
 @bot.event
 async def on_message(message: discord.Message):
-    """Speichert jede Nachricht im Eintrag-Channel in die DB."""
+    """Stores every message in the entry channel in the DB."""
     if message.author.bot:
         return
     if message.channel.id != ENTRY_CHANNEL:
@@ -179,7 +179,7 @@ async def on_message(message: discord.Message):
     if not giveaway:
         return
 
-    # Nur innerhalb des Giveaway-Zeitraums
+    # Only within the giveaway period
     now = datetime.now(timezone.utc)
     start = datetime.fromisoformat(giveaway["start_date"])
     end   = datetime.fromisoformat(giveaway["end_date"])
@@ -207,13 +207,13 @@ async def on_message(message: discord.Message):
             message.content[:2000],
             now.isoformat(),
         ))
-    log.debug("Eintrag gespeichert: user=%s msg=%s", message.author, message.id)
+    log.debug("Entry saved: user=%s msg=%s", message.author, message.id)
     await bot.process_commands(message)
 
 
 @bot.event
 async def on_message_delete(message: discord.Message):
-    """Markiert gelöschte Nachrichten als disqualifiziert."""
+    """Marks deleted messages as disqualified."""
     if message.channel.id != ENTRY_CHANNEL:
         return
     with get_db() as conn:
@@ -221,10 +221,10 @@ async def on_message_delete(message: discord.Message):
             "UPDATE entries SET status='disqualified' WHERE message_id=?",
             (message.id,)
         )
-    log.info("Nachricht gelöscht → disqualifiziert: msg=%s", message.id)
+    log.info("Message deleted → disqualified: msg=%s", message.id)
 
 
-# ── Background Task: automatisches Ende ───────────────────────────────────────
+# ── Background Task: automatic end ─────────────────────────────────────────────
 @tasks.loop(minutes=5)
 async def check_giveaway_end():
     now = datetime.now(timezone.utc).isoformat()
@@ -237,26 +237,26 @@ async def check_giveaway_end():
         admin_ch = bot.get_channel(ADMIN_CHANNEL)
         if admin_ch:
             await admin_ch.send(
-                f"⏰ **Giveaway `{gw['name']}` ist abgelaufen!**\n"
-                f"Verwende `/draw giveaway_id:{gw['id']}` um den ersten Gewinner zu ziehen."
+                f"⏰ **Giveaway `{gw['name']}` has ended!**\n"
+                f"Use `/draw giveaway_id:{gw['id']}` to draw the first winner."
             )
         with get_db() as conn:
-            # Giveaway NICHT automatisch schließen – Admin zieht manuell
+            # Do NOT automatically close the giveaway – admin draws manually
             pass
-        log.info("Giveaway %s (%s) abgelaufen", gw["id"], gw["name"])
+        log.info("Giveaway %s (%s) ended", gw["id"], gw["name"])
 
 
 # ── Slash Commands ─────────────────────────────────────────────────────────────
 guild_obj = discord.Object(id=GUILD_ID)
 
 
-@tree.command(name="giveaway_start", description="Startet ein neues Giveaway", guild=guild_obj)
+@tree.command(name="giveaway_start", description="Starts a new giveaway", guild=guild_obj)
 @app_commands.describe(
-    name        = "Name / Titel des Giveaways",
-    start       = "Startdatum und -zeit (DD.MM.YYYY HH:MM)",
-    end         = "Enddatum und -zeit (DD.MM.YYYY HH:MM)",
-    winners     = "Anzahl der Gewinner (Standard: 1)",
-    channel_id  = "Channel-ID für Einträge (leer = konfigurierten Channel nutzen)",
+    name        = "Name / title of the giveaway",
+    start       = "Start date and time (DD.MM.YYYY HH:MM)",
+    end         = "End date and time (DD.MM.YYYY HH:MM)",
+    winners     = "Number of winners (default: 1)",
+    channel_id  = "Channel ID for entries (leave empty = use configured channel)",
 )
 @app_commands.checks.has_permissions(administrator=True)
 async def giveaway_start(
@@ -272,24 +272,24 @@ async def giveaway_start(
         start_dt = parse_dt(start)
         end_dt   = parse_dt(end)
     except ValueError:
-        await interaction.followup.send("❌ Ungültiges Datumsformat. Bitte `DD.MM.YYYY HH:MM` verwenden.", ephemeral=True)
+        await interaction.followup.send("❌ Invalid date format. Please use `DD.MM.YYYY HH:MM`.", ephemeral=True)
         return
 
     if end_dt <= start_dt:
-        await interaction.followup.send("❌ Enddatum muss nach dem Startdatum liegen.", ephemeral=True)
+        await interaction.followup.send("❌ End date must be after the start date.", ephemeral=True)
         return
     if winners < 1:
-        await interaction.followup.send("❌ Mindestens 1 Gewinner erforderlich.", ephemeral=True)
+        await interaction.followup.send("❌ At least 1 winner is required.", ephemeral=True)
         return
 
     ch_id = int(channel_id) if channel_id.strip() else ENTRY_CHANNEL
 
-    # Prüfe ob schon ein aktives Giveaway in diesem Channel läuft
+    # Check if there is already an active giveaway in this channel
     existing = get_active_giveaway(ch_id)
     if existing:
         await interaction.followup.send(
-            f"❌ In <#{ch_id}> läuft bereits Giveaway **{existing['name']}** (ID {existing['id']}).\n"
-            f"Beende es zuerst mit `/giveaway_end`.", ephemeral=True
+            f"❌ A giveaway is already running in <#{ch_id}>: **{existing['name']}** (ID {existing['id']}).\n"
+            f"End it first with `/giveaway_end`.", ephemeral=True
         )
         return
 
@@ -301,37 +301,37 @@ async def giveaway_start(
         gw_id = cursor.lastrowid
 
     embed = discord.Embed(
-        title="🎉 Neues Giveaway gestartet!",
+        title="🎉 New giveaway started!",
         color=discord.Color.green(),
         description=f"**{name}**"
     )
-    embed.add_field(name="Giveaway-ID", value=str(gw_id), inline=True)
+    embed.add_field(name="Giveaway ID", value=str(gw_id), inline=True)
     embed.add_field(name="Channel",     value=f"<#{ch_id}>", inline=True)
-    embed.add_field(name="Gewinner",    value=str(winners), inline=True)
+    embed.add_field(name="Winners",     value=str(winners), inline=True)
     embed.add_field(name="Start",       value=fmt_dt(start_dt), inline=True)
-    embed.add_field(name="Ende",        value=fmt_dt(end_dt),   inline=True)
+    embed.add_field(name="End",         value=fmt_dt(end_dt),   inline=True)
 
     await interaction.followup.send(embed=embed, ephemeral=False)
-    log.info("Giveaway gestartet: ID=%s Name=%s", gw_id, name)
+    log.info("Giveaway started: ID=%s Name=%s", gw_id, name)
 
 
-@tree.command(name="giveaway_end", description="Beendet ein aktives Giveaway manuell", guild=guild_obj)
-@app_commands.describe(giveaway_id="ID des Giveaways")
+@tree.command(name="giveaway_end", description="Ends an active giveaway manually", guild=guild_obj)
+@app_commands.describe(giveaway_id="Giveaway ID")
 @app_commands.checks.has_permissions(administrator=True)
 async def giveaway_end(interaction: discord.Interaction, giveaway_id: int):
     await interaction.response.defer(ephemeral=True)
     with get_db() as conn:
         gw = conn.execute("SELECT * FROM giveaways WHERE id=?", (giveaway_id,)).fetchone()
         if not gw:
-            await interaction.followup.send("❌ Giveaway nicht gefunden.", ephemeral=True)
+            await interaction.followup.send("❌ Giveaway not found.", ephemeral=True)
             return
         conn.execute("UPDATE giveaways SET active=0 WHERE id=?", (giveaway_id,))
-    await interaction.followup.send(f"✅ Giveaway **{gw['name']}** (ID {giveaway_id}) beendet.", ephemeral=True)
-    log.info("Giveaway beendet: ID=%s", giveaway_id)
+    await interaction.followup.send(f"✅ Giveaway **{gw['name']}** (ID {giveaway_id}) ended.", ephemeral=True)
+    log.info("Giveaway ended: ID=%s", giveaway_id)
 
 
-@tree.command(name="draw", description="Zieht den nächsten Gewinner", guild=guild_obj)
-@app_commands.describe(giveaway_id="ID des Giveaways")
+@tree.command(name="draw", description="Draws the next winner", guild=guild_obj)
+@app_commands.describe(giveaway_id="Giveaway ID")
 @app_commands.checks.has_permissions(administrator=True)
 async def draw(interaction: discord.Interaction, giveaway_id: int):
     await interaction.response.defer(ephemeral=False)
@@ -339,10 +339,10 @@ async def draw(interaction: discord.Interaction, giveaway_id: int):
     with get_db() as conn:
         gw = conn.execute("SELECT * FROM giveaways WHERE id=?", (giveaway_id,)).fetchone()
     if not gw:
-        await interaction.followup.send("❌ Giveaway nicht gefunden.")
+        await interaction.followup.send("❌ Giveaway not found.")
         return
 
-    # Bereits gewonnene User ermitteln
+    # Determine users who already won
     with get_db() as conn:
         won_rows = conn.execute(
             "SELECT user_id FROM winners WHERE giveaway_id=? AND status='approved'",
@@ -357,18 +357,18 @@ async def draw(interaction: discord.Interaction, giveaway_id: int):
 
     if len(won_users) >= gw["total_winners"]:
         await interaction.followup.send(
-            f"🏆 Alle {gw['total_winners']} Gewinner wurden bereits gezogen und bestätigt!"
+            f"🏆 All {gw['total_winners']} winners have already been drawn and approved!"
         )
         return
 
-    # Auch bereits als rejected gemeldete User ausschließen
+    # Also exclude users already marked as rejected
     excluded = list(set(won_users + rejected_users))
     entry = draw_winner(giveaway_id, excluded)
 
     if not entry:
         await interaction.followup.send(
-            "😔 Keine weiteren berechtigten Einträge vorhanden. "
-            "Alle Teilnehmer wurden entweder bereits gewählt, disqualifiziert oder abgelehnt."
+            "😔 No more eligible entries available. "
+            "All participants have either already been selected, disqualified, or rejected."
         )
         return
 
@@ -381,25 +381,25 @@ async def draw(interaction: discord.Interaction, giveaway_id: int):
         """, (giveaway_id, entry["user_id"], entry["entry_id"], round_num))
         winner_id = cursor.lastrowid
 
-    # Admin-Review Embed
+    # Admin review embed
     admin_ch = bot.get_channel(ADMIN_CHANNEL)
     embed = discord.Embed(
-        title=f"🎲 Gewinner gezogen – Runde {round_num}",
+        title=f"🎲 Winner drawn – Round {round_num}",
         color=discord.Color.gold(),
         description=f"**Giveaway:** {gw['name']} (ID {giveaway_id})\n"
-                    f"**Gezogen:** {round_num} von {gw['total_winners']} Gewinnern"
+                    f"**Drawn:** {round_num} of {gw['total_winners']} winners"
     )
     embed.add_field(name="User",       value=f"<@{entry['user_id']}> ({entry['username']})", inline=False)
-    embed.add_field(name="Post-Link",  value=entry["message_url"], inline=False)
-    embed.add_field(name="Inhalt",     value=(entry["message_content"] or "_(kein Text)_")[:512], inline=False)
+    embed.add_field(name="Post Link",  value=entry["message_url"], inline=False)
+    embed.add_field(name="Content",    value=(entry["message_content"] or "_(no text)_")[:512], inline=False)
     embed.add_field(
-        name="Aktion",
-        value=f"Prüfe den Post und verwende dann:\n"
-              f"`/approve winner_id:{winner_id}` – berechtigt ✅\n"
-              f"`/reject winner_id:{winner_id}` – nicht berechtigt ❌",
+        name="Action",
+        value=f"Review the post and then use:\n"
+              f"`/approve winner_id:{winner_id}` – eligible ✅\n"
+              f"`/reject winner_id:{winner_id}` – not eligible ❌",
         inline=False
     )
-    embed.set_footer(text=f"Winner-DB-ID: {winner_id} | Eintrag-ID: {entry['entry_id']}")
+    embed.set_footer(text=f"Winner DB ID: {winner_id} | Entry ID: {entry['entry_id']}")
 
     review_msg = None
     if admin_ch:
@@ -412,18 +412,18 @@ async def draw(interaction: discord.Interaction, giveaway_id: int):
 
     await interaction.followup.send(
         embed=embed if not admin_ch else discord.Embed(
-            title="✅ Gewinner gezogen",
-            description=f"Review wurde in <#{ADMIN_CHANNEL}> gepostet.",
+            title="✅ Winner drawn",
+            description=f"Review was posted in <#{ADMIN_CHANNEL}>.",
             color=discord.Color.blue()
         )
     )
-    log.info("Gewinner gezogen: winner_id=%s user=%s entry=%s", winner_id, entry["user_id"], entry["entry_id"])
+    log.info("Winner drawn: winner_id=%s user=%s entry=%s", winner_id, entry["user_id"], entry["entry_id"])
 
 
-@tree.command(name="approve", description="Bestätigt einen gezogenen Gewinner", guild=guild_obj)
+@tree.command(name="approve", description="Approves a drawn winner", guild=guild_obj)
 @app_commands.describe(
-    winner_id="ID des Gewinners (aus /draw)",
-    note="Optionale Notiz zur Ankündigung"
+    winner_id="Winner ID (from /draw)",
+    note="Optional note for the announcement"
 )
 @app_commands.checks.has_permissions(administrator=True)
 async def approve(interaction: discord.Interaction, winner_id: int, note: str = ""):
@@ -440,10 +440,10 @@ async def approve(interaction: discord.Interaction, winner_id: int, note: str = 
         """, (winner_id,)).fetchone()
 
     if not w:
-        await interaction.followup.send("❌ Gewinner-ID nicht gefunden.")
+        await interaction.followup.send("❌ Winner ID not found.")
         return
     if w["status"] != "pending":
-        await interaction.followup.send(f"⚠️ Status ist bereits `{w['status']}` – keine Änderung.")
+        await interaction.followup.send(f"⚠️ Status is already `{w['status']}` – no change.")
         return
 
     now = datetime.now(timezone.utc).isoformat()
@@ -461,32 +461,32 @@ async def approve(interaction: discord.Interaction, winner_id: int, note: str = 
             (w["giveaway_id"],)
         )
 
-    # Gewinner-Ankündigung
+    # Winner announcement
     winner_ch = bot.get_channel(WINNER_CHANNEL)
     announce_embed = discord.Embed(
-        title="🏆 Gewinner bestätigt!",
+        title="🏆 Winner approved!",
         color=discord.Color.gold(),
         description=f"**{w['giveaway_name']}**"
     )
-    announce_embed.add_field(name="🎉 Gewinner", value=f"<@{w['user_id']}>", inline=False)
-    announce_embed.add_field(name="Gewinner-Post", value=w["message_url"], inline=False)
+    announce_embed.add_field(name="🎉 Winner", value=f"<@{w['user_id']}>", inline=False)
+    announce_embed.add_field(name="Winning Post", value=w["message_url"], inline=False)
     if note:
-        announce_embed.add_field(name="Hinweis", value=note, inline=False)
+        announce_embed.add_field(name="Note", value=note, inline=False)
 
-    # Prüfe ob alle Gewinner gezogen wurden
+    # Check if all winners have been drawn
     with get_db() as conn:
         gw = conn.execute("SELECT * FROM giveaways WHERE id=?", (w["giveaway_id"],)).fetchone()
 
-    remaining = gw["total_winners"] - gw["winners_drawn"] - 1  # -1 weil noch nicht committed
-    # Vereinfachung: nach Commit
+    remaining = gw["total_winners"] - gw["winners_drawn"] - 1  # -1 because not yet committed
+    # Simplification: after commit
     with get_db() as conn:
         gw = conn.execute("SELECT * FROM giveaways WHERE id=?", (w["giveaway_id"],)).fetchone()
     remaining = gw["total_winners"] - gw["winners_drawn"]
 
     if remaining > 0:
-        announce_embed.set_footer(text=f"Noch {remaining} Gewinner ausstehend. Nächster Zug: /draw giveaway_id:{w['giveaway_id']}")
+        announce_embed.set_footer(text=f"{remaining} winner(s) still pending. Next draw: /draw giveaway_id:{w['giveaway_id']}")
     else:
-        announce_embed.set_footer(text="Alle Gewinner wurden ermittelt! 🎊")
+        announce_embed.set_footer(text="All winners have been determined! 🎊")
         with get_db() as conn:
             conn.execute("UPDATE giveaways SET active=0 WHERE id=?", (w["giveaway_id"],))
 
@@ -500,19 +500,19 @@ async def approve(interaction: discord.Interaction, winner_id: int, note: str = 
             )
 
     await interaction.followup.send(
-        f"✅ <@{w['user_id']}> wurde als Gewinner bestätigt und in <#{WINNER_CHANNEL}> angekündigt!\n"
-        + (f"Noch **{remaining}** Gewinner ausstehend. Verwende `/draw giveaway_id:{w['giveaway_id']}`" if remaining > 0 else "🎊 Alle Gewinner ermittelt!")
+        f"✅ <@{w['user_id']}> was approved as winner and announced in <#{WINNER_CHANNEL}>!\n"
+        + (f"**{remaining}** winner(s) still pending. Use `/draw giveaway_id:{w['giveaway_id']}`" if remaining > 0 else "🎊 All winners determined!")
     )
-    log.info("Gewinner bestätigt: winner_id=%s user=%s", winner_id, w["user_id"])
+    log.info("Winner approved: winner_id=%s user=%s", winner_id, w["user_id"])
 
 
-@tree.command(name="reject", description="Lehnt einen gezogenen Gewinner ab und ermöglicht Neuzug", guild=guild_obj)
+@tree.command(name="reject", description="Rejects a drawn winner and allows a redraw", guild=guild_obj)
 @app_commands.describe(
-    winner_id="ID des Gewinners (aus /draw)",
-    reason="Grund für die Ablehnung"
+    winner_id="Winner ID (from /draw)",
+    reason="Reason for rejection"
 )
 @app_commands.checks.has_permissions(administrator=True)
-async def reject(interaction: discord.Interaction, winner_id: int, reason: str = "Bedingungen nicht erfüllt"):
+async def reject(interaction: discord.Interaction, winner_id: int, reason: str = "Conditions not met"):
     await interaction.response.defer(ephemeral=False)
 
     with get_db() as conn:
@@ -525,10 +525,10 @@ async def reject(interaction: discord.Interaction, winner_id: int, reason: str =
         """, (winner_id,)).fetchone()
 
     if not w:
-        await interaction.followup.send("❌ Gewinner-ID nicht gefunden.")
+        await interaction.followup.send("❌ Winner ID not found.")
         return
     if w["status"] != "pending":
-        await interaction.followup.send(f"⚠️ Status ist bereits `{w['status']}` – keine Änderung.")
+        await interaction.followup.send(f"⚠️ Status is already `{w['status']}` – no change.")
         return
 
     now = datetime.now(timezone.utc).isoformat()
@@ -543,16 +543,16 @@ async def reject(interaction: discord.Interaction, winner_id: int, reason: str =
         )
 
     await interaction.followup.send(
-        f"❌ <@{w['user_id']}> ({w['username']}) wurde abgelehnt.\n"
-        f"**Grund:** {reason}\n"
-        f"Der User wird beim nächsten Zug ausgeschlossen.\n"
-        f"Verwende `/draw giveaway_id:{w['giveaway_id']}` für den nächsten Ziehversuch."
+        f"❌ <@{w['user_id']}> ({w['username']}) was rejected.\n"
+        f"**Reason:** {reason}\n"
+        f"The user will be excluded from the next draw.\n"
+        f"Use `/draw giveaway_id:{w['giveaway_id']}` for the next draw attempt."
     )
-    log.info("Gewinner abgelehnt: winner_id=%s user=%s", winner_id, w["user_id"])
+    log.info("Winner rejected: winner_id=%s user=%s", winner_id, w["user_id"])
 
 
-@tree.command(name="giveaway_stats", description="Zeigt Statistiken eines Giveaways", guild=guild_obj)
-@app_commands.describe(giveaway_id="ID des Giveaways (leer = aktuelles)")
+@tree.command(name="giveaway_stats", description="Shows statistics for a giveaway", guild=guild_obj)
+@app_commands.describe(giveaway_id="Giveaway ID (leave empty = current)")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def giveaway_stats(interaction: discord.Interaction, giveaway_id: int = 0):
     await interaction.response.defer(ephemeral=True)
@@ -566,7 +566,7 @@ async def giveaway_stats(interaction: discord.Interaction, giveaway_id: int = 0)
             ).fetchone()
 
     if not gw:
-        await interaction.followup.send("❌ Kein aktives Giveaway gefunden.", ephemeral=True)
+        await interaction.followup.send("❌ No active giveaway found.", ephemeral=True)
         return
 
     gw_id = gw["id"]
@@ -593,32 +593,32 @@ async def giveaway_stats(interaction: discord.Interaction, giveaway_id: int = 0)
         title=f"📊 Stats: {gw['name']}",
         color=discord.Color.blurple()
     )
-    embed.add_field(name="Status",          value="✅ Aktiv" if gw["active"] else "🔴 Beendet", inline=True)
-    embed.add_field(name="Gesamt-Einträge", value=str(total_entries), inline=True)
-    embed.add_field(name="Unique Teilnehmer", value=str(unique_users), inline=True)
-    embed.add_field(name="Gewinner",
+    embed.add_field(name="Status",          value="✅ Active" if gw["active"] else "🔴 Ended", inline=True)
+    embed.add_field(name="Total Entries", value=str(total_entries), inline=True)
+    embed.add_field(name="Unique Participants", value=str(unique_users), inline=True)
+    embed.add_field(name="Winners",
                     value=f"{gw['winners_drawn']} / {gw['total_winners']}", inline=True)
-    embed.add_field(name="Zeitraum",
+    embed.add_field(name="Period",
                     value=f"{gw['start_date'][:16]} → {gw['end_date'][:16]}", inline=False)
 
     if top_users:
-        top_str = "\n".join(f"{i+1}. **{r['username']}** – {r['cnt']} Einträge"
+        top_str = "\n".join(f"{i+1}. **{r['username']}** – {r['cnt']} entries"
                             for i, r in enumerate(top_users))
-        embed.add_field(name="🔝 Top-Teilnehmer (nach Einträgen)", value=top_str, inline=False)
+        embed.add_field(name="🔝 Top Participants (by entries)", value=top_str, inline=False)
 
     if winners:
         def status_icon(s):
             return {"approved": "✅", "rejected": "❌", "pending": "⏳"}.get(s, "❓")
         w_str = "\n".join(
-            f"Runde {w['draw_round']}: <@{w['user_id']}> {status_icon(w['status'])}"
+            f"Round {w['draw_round']}: <@{w['user_id']}> {status_icon(w['status'])}"
             for w in winners
         )
-        embed.add_field(name="🏆 Gewinner-Übersicht", value=w_str, inline=False)
+        embed.add_field(name="🏆 Winner Overview", value=w_str, inline=False)
 
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-@tree.command(name="giveaway_list", description="Listet alle Giveaways auf", guild=guild_obj)
+@tree.command(name="giveaway_list", description="Lists all giveaways", guild=guild_obj)
 @app_commands.checks.has_permissions(administrator=True)
 async def giveaway_list(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -628,37 +628,37 @@ async def giveaway_list(interaction: discord.Interaction):
         ).fetchall()
 
     if not rows:
-        await interaction.followup.send("Noch keine Giveaways vorhanden.", ephemeral=True)
+        await interaction.followup.send("No giveaways found yet.", ephemeral=True)
         return
 
     lines = []
     for r in rows:
-        status = "✅ Aktiv" if r["active"] else "🔴 Beendet"
-        lines.append(f"**ID {r['id']}** – {r['name']} [{status}] ({r['winners_drawn']}/{r['total_winners']} Gewinner)")
+        status = "✅ Active" if r["active"] else "🔴 Ended"
+        lines.append(f"**ID {r['id']}** – {r['name']} [{status}] ({r['winners_drawn']}/{r['total_winners']} winners)")
 
-    embed = discord.Embed(title="📋 Giveaway-Liste", description="\n".join(lines), color=discord.Color.blurple())
+    embed = discord.Embed(title="📋 Giveaway List", description="\n".join(lines), color=discord.Color.blurple())
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-@tree.command(name="scan_history", description="Scannt vergangene Nachrichten im Entry-Channel (Backfill)", guild=guild_obj)
+@tree.command(name="scan_history", description="Scans past messages in the entry channel (backfill)", guild=guild_obj)
 @app_commands.describe(
-    giveaway_id="ID des Giveaways",
-    limit="Maximale Anzahl Nachrichten (Standard: 1000)"
+    giveaway_id="Giveaway ID",
+    limit="Maximum number of messages (default: 1000)"
 )
 @app_commands.checks.has_permissions(administrator=True)
 async def scan_history(interaction: discord.Interaction, giveaway_id: int, limit: int = 1000):
-    """Liest vergangene Nachrichten ein, die vor Bot-Start gepostet wurden."""
+    """Reads past messages that were posted before the bot started."""
     await interaction.response.defer(ephemeral=True)
 
     with get_db() as conn:
         gw = conn.execute("SELECT * FROM giveaways WHERE id=?", (giveaway_id,)).fetchone()
     if not gw:
-        await interaction.followup.send("❌ Giveaway nicht gefunden.", ephemeral=True)
+        await interaction.followup.send("❌ Giveaway not found.", ephemeral=True)
         return
 
     channel = bot.get_channel(gw["channel_id"])
     if not channel:
-        await interaction.followup.send("❌ Channel nicht gefunden.", ephemeral=True)
+        await interaction.followup.send("❌ Channel not found.", ephemeral=True)
         return
 
     start_dt = datetime.fromisoformat(gw["start_date"])
@@ -687,18 +687,18 @@ async def scan_history(interaction: discord.Interaction, giveaway_id: int, limit
             count += 1
 
     await interaction.followup.send(
-        f"✅ Scan abgeschlossen:\n"
-        f"• **{count}** neue Einträge importiert\n"
-        f"• **{skipped}** bereits vorhanden (übersprungen)",
+        f"✅ Scan completed:\n"
+        f"• **{count}** new entries imported\n"
+        f"• **{skipped}** already existed (skipped)",
         ephemeral=True
     )
-    log.info("Scan abgeschlossen: giveaway_id=%s neu=%s übersprungen=%s", giveaway_id, count, skipped)
+    log.info("Scan completed: giveaway_id=%s new=%s skipped=%s", giveaway_id, count, skipped)
 
 
-@tree.command(name="disqualify_entry", description="Disqualifiziert einen einzelnen Eintrag manuell", guild=guild_obj)
+@tree.command(name="disqualify_entry", description="Disqualifies a single entry manually", guild=guild_obj)
 @app_commands.describe(
-    message_id="Discord-Message-ID des Eintrags",
-    reason="Grund für Disqualifizierung"
+    message_id="Discord message ID of the entry",
+    reason="Reason for disqualification"
 )
 @app_commands.checks.has_permissions(administrator=True)
 async def disqualify_entry(interaction: discord.Interaction, message_id: str, reason: str = ""):
@@ -707,12 +707,12 @@ async def disqualify_entry(interaction: discord.Interaction, message_id: str, re
     with get_db() as conn:
         entry = conn.execute("SELECT * FROM entries WHERE message_id=?", (mid,)).fetchone()
         if not entry:
-            await interaction.followup.send("❌ Eintrag nicht gefunden.", ephemeral=True)
+            await interaction.followup.send("❌ Entry not found.", ephemeral=True)
             return
         conn.execute("UPDATE entries SET status='disqualified' WHERE message_id=?", (mid,))
     await interaction.followup.send(
-        f"✅ Eintrag von <@{entry['user_id']}> disqualifiziert."
-        + (f"\n**Grund:** {reason}" if reason else ""),
+        f"✅ Entry from <@{entry['user_id']}> disqualified."
+        + (f"\n**Reason:** {reason}" if reason else ""),
         ephemeral=True
     )
 
@@ -722,15 +722,15 @@ async def disqualify_entry(interaction: discord.Interaction, message_id: str, re
 async def on_app_command_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message(
-            "❌ Du hast keine Berechtigung für diesen Befehl.", ephemeral=True
+            "❌ You do not have permission to use this command.", ephemeral=True
         )
     else:
-        log.error("Command-Fehler: %s", error, exc_info=True)
+        log.error("Command error: %s", error, exc_info=True)
         if not interaction.response.is_done():
-            await interaction.response.send_message("❌ Ein Fehler ist aufgetreten.", ephemeral=True)
+            await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
 
 
-# ── Einstiegspunkt ─────────────────────────────────────────────────────────────
+# ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     init_db()
     bot.run(BOT_TOKEN)
