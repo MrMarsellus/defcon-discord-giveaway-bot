@@ -161,9 +161,9 @@ def excluded_users(giveaway_id: int) -> list[int]:
 
 # ── Bot setup ──────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
-intents.message_content = False
+intents.message_content = True
 intents.guilds          = True
-intents.members         = False
+intents.members         = True
 
 bot   = commands.Bot(command_prefix="!", intents=intents)
 tree  = bot.tree
