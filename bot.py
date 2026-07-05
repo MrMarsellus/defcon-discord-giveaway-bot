@@ -3,7 +3,7 @@ Boticana / DeFCoN – Discord Giveaway Bot v2
 ============================================
 No permanent monitoring. The bot is started at the end of the giveaway,
 reads the entry channel via /scan, and then draws the winners.
-
+============================================
 Required: discord.py >= 2.3  |  Python >= 3.10
 Installation: pip install "discord.py>=2.3" python-dotenv
 """
@@ -161,9 +161,9 @@ def excluded_users(giveaway_id: int) -> list[int]:
 
 # ── Bot setup ──────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = False
 intents.guilds          = True
-intents.members         = True
+intents.members         = False
 
 bot   = commands.Bot(command_prefix="!", intents=intents)
 tree  = bot.tree
